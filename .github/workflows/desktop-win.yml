@@ -1,0 +1,90 @@
+# Windows 便携版（无安装器）：Rich4.exe + dist\（网页构建）+ assets\（空，玩家自解素材），打成 zip。
+#
+# 素材不进 zip：玩家沿用现有 Releases 的 rich4-assets.tar，把里面的 assets\ 解到 Rich4.exe 旁。
+# runner 上仍要下载一次素材——但只是为了 vite 拷贝进 dist 后生成含素材哈希的 update-base.json
+# （在線更新 ui/update.ts 依赖它对比差异；桌面不列素材哈希的话，第一次更新会把 1.6GB 全下进 overlay）。
+# 打 zip 前把 dist\assets 剪掉：运行时素材走 exe 旁的 assets\（src-tauri/src/main.rs 的 rich4:// 协议）。
+#
+# 前置：本 workflow 依赖 game/src-tauri（Tauri 壳，desktop/main.cjs 的平移版）。
+name: desktop-win
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: game
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: game/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: game/src-tauri
+
+      # 素材（只进 dist 供 update-base.json 列哈希，不进 zip）
+      - name: Download assets
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download assets --repo ${{ github.repository }} --pattern 'rich4-assets.tar*'
+          $expected = (Get-Content rich4-assets.tar.sha256 | ForEach-Object { ($_ -split '\s+')[0] })[0]
+          $actual = (Get-FileHash rich4-assets.tar -Algorithm SHA256).Hash.ToLower()
+          if ($expected -ne $actual) { throw 'rich4-assets.tar 校验失败' }
+          New-Item -ItemType Directory -Path game/public | Out-Null
+          tar -xf rich4-assets.tar -C game/public
+          Remove-Item rich4-assets.tar   # 1.6GB，及时释放
+
+      - name: Build web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Write update-base.json
+        run: node scripts/update-manifest.mjs
+
+      - name: Build portable exe (Tauri, no bundle)
+        working-directory: game/src-tauri
+        run: npx tauri build --no-bundle
+
+      - name: Package zip
+        working-directory: .
+        shell: pwsh
+        run: |
+          $v = (Get-Content game/package.json | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Path stage/assets | Out-Null
+          Copy-Item game/src-tauri/target/release/Rich4.exe stage/Rich4.exe
+          Copy-Item game/dist stage/dist -Recurse
+          Remove-Item stage/dist/assets -Recurse -Force   # 素材在 zip 外：Rich4.exe 旁的 assets\
+          @'
+          把 Releases 里的 rich4-assets.tar 解壓到本資料夾（出現 assets\ 與 dist\ 並列），然後雙擊 Rich4.exe。
+          存檔在系統的 %LOCALAPPDATA%\pro.areu.rich4 裡，更新與換資料夾都不會丟。
+          '@ | Set-Content stage/把素材放这里.txt
+          Compress-Archive -Path stage/* -DestinationPath "Rich4-$v-win-portable.zip"
+          "zip=Rich4-$v-win-portable.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rich4-win-portable
+          path: Rich4-*-win-portable.zip
+          retention-days: 14
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Rich4-*-win-portable.zip

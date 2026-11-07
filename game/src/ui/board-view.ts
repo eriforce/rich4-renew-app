@@ -1089,10 +1089,16 @@ export class BoardView {
     a.dir = dir; a.visible = true;
     this.pose.delete(id);
     if (a.phase !== 1) { a.phase = 1; a.anim = 0; }
-    const ticks = Math.ceil(Math.hypot(to.x - a.x, to.y - a.y) / Math.max(1, speed)) + 1;
+    // Even steps: the distance split evenly over the ticks, not `speed` px a tick with the remainder crawling on
+    // the last one — a car (16 px/tick) on 72 px squares used to slow to half speed at every square's end, which
+    // read as walk-a-tile-pause-walk on a long run. Tick count is the original's round_toward_zero(dist/speed)
+    // (01 §6.1, at least 1; rich4-re moveOneStep splits the same way), so the per-square pace is unchanged.
+    const dist = Math.hypot(to.x - a.x, to.y - a.y);
+    const ticks = Math.max(1, Math.floor(dist / Math.max(1, speed)));
+    const step = dist / ticks;
     return watch(label, new Promise<void>(resolve => {
-      const timer = setTimeout(() => this.finishMove(id), ticks * Math.max(this.tickMs, 20) * 4 + 2000);
-      this.movers.set(id, { tx: to.x, ty: to.y, speed, done: () => { clearTimeout(timer); after?.(); resolve(); } });
+      const timer = setTimeout(() => this.finishMove(id), (ticks + 1) * Math.max(this.tickMs, 20) * 4 + 2000);
+      this.movers.set(id, { tx: to.x, ty: to.y, speed: step, done: () => { clearTimeout(timer); after?.(); resolve(); } });
     }));
   }
 

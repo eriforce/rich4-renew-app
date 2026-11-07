@@ -228,8 +228,11 @@ function openDownloadPage() { window.open(DOWNLOAD_PAGE, '_blank'); }
 
 /** The title: a newer version is offered once per start (playing alone may stay on the old one). */
 let offered = false;
+/** 2026-11-07: 用戶要求關閉在線更新（桌面版 binary 補丁同源）：標題不再提示，派對不再強制升級。
+ *  改回 false 即恢復檢查與提示（checkUpdate() 及其測試原樣保留）。 */
+const UPDATES_DISABLED = true;
 export async function offerOnTitle(parent: HTMLElement): Promise<void> {
-  if (offered) return;
+  if (UPDATES_DISABLED || offered) return;
   offered = true;
   const st = await checkUpdate();
   if (st.kind === 'none' || !parent.isConnected) return;
@@ -249,6 +252,7 @@ export async function offerOnTitle(parent: HTMLElement): Promise<void> {
  * the newest, or the newest is not known — then the room's own version check still holds). False: it stays out.
  */
 export async function partyNeedsUpdate(parent: HTMLElement): Promise<boolean> {
+  if (UPDATES_DISABLED) return true;
   const st = await checkUpdate();
   if (st.kind === 'none') return true;
   if (st.kind === 'installer') {
